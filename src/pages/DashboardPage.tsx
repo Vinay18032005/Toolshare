@@ -22,6 +22,7 @@ import { useAuth } from '@/context/AuthContext';
 import { EquipmentCard } from '@/components/EquipmentCard';
 import { EmptyState } from '@/components/EmptyState';
 import { ListSkeleton } from '@/components/Skeletons';
+import { PaymentModal } from '@/components/PaymentModal';
 import { formatCurrency, formatDate, classNames } from '@/utils/helpers';
 import { BOOKING_STATUS_LABELS, BOOKING_STATUS_COLORS } from '@/types';
 import type { Equipment, Booking, Profile } from '@/types';
@@ -40,6 +41,7 @@ export function DashboardPage() {
   const [equipmentMap, setEquipmentMap] = useState<Record<string, Equipment>>({});
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ totalEarnings: 0, totalRentals: 0, activeListings: 0, avgRating: 0 });
+  const [paymentModal, setPaymentModal] = useState<Booking | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -468,14 +470,7 @@ export function DashboardPage() {
                         )}
                         {booking.status === 'approved' && !booking.deposit_paid && (
                           <button
-                            onClick={async () => {
-                              const { error } = await supabase.from('bookings').update({ deposit_paid: true, rental_paid: true }).eq('id', booking.id);
-                              if (error) { toast.error('Payment failed'); }
-                              else {
-                                setOutgoingBookings((prev) => prev.map((b) => (b.id === booking.id ? { ...b, deposit_paid: true, rental_paid: true } : b)));
-                                toast.success('Payment successful! (Simulated)');
-                              }
-                            }}
+                            onClick={() => setPaymentModal(booking)}
                             className="btn-primary px-4 py-2 text-xs"
                           >
                             Pay Now
@@ -579,6 +574,17 @@ export function DashboardPage() {
             </div>
           </div>
         </div>
+      )}
+      {paymentModal && (
+        <PaymentModal
+          booking={paymentModal}
+          equipment={equipmentMap[paymentModal.equipment_id]}
+          onClose={() => setPaymentModal(null)}
+          onSuccess={(updated) => {
+            setOutgoingBookings((prev) => prev.map((b) => (b.id === updated.id ? updated : b)));
+            setPaymentModal(null);
+          }}
+        />
       )}
     </div>
   );

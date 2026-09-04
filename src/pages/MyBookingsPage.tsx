@@ -21,6 +21,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { EmptyState } from '@/components/EmptyState';
 import { RatingStars } from '@/components/RatingStars';
+import { PaymentModal } from '@/components/PaymentModal';
 import { formatCurrency, formatDate, classNames } from '@/utils/helpers';
 import { BOOKING_STATUS_LABELS, BOOKING_STATUS_COLORS } from '@/types';
 import type { Booking, Equipment, Profile, Review } from '@/types';
@@ -44,6 +45,7 @@ export function MyBookingsPage() {
   const [conditionType, setConditionType] = useState<'before' | 'after'>('before');
   const [disputeModal, setDisputeModal] = useState<Booking | null>(null);
   const [disputeNotes, setDisputeNotes] = useState('');
+  const [paymentModal, setPaymentModal] = useState<Booking | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -100,28 +102,6 @@ export function MyBookingsPage() {
         prev.map((b) => (b.id === bookingId ? { ...b, status: 'cancelled' } : b)),
       );
       toast.success('Booking cancelled');
-    }
-  };
-
-  const handleSimulatePayment = async (booking: Booking) => {
-    const { error } = await supabase
-      .from('bookings')
-      .update({ deposit_paid: true, rental_paid: true })
-      .eq('id', booking.id);
-    if (error) {
-      toast.error('Payment simulation failed');
-    } else {
-      setBookings((prev) =>
-        prev.map((b) => (b.id === booking.id ? { ...b, deposit_paid: true, rental_paid: true } : b)),
-      );
-      // Notify lender
-      await supabase.from('notifications').insert({
-        user_id: booking.lender_id,
-        type: 'payment',
-        message: `Payment received for "${equipmentMap[booking.equipment_id]?.name || 'equipment'}"`,
-        booking_id: booking.id,
-      });
-      toast.success('Payment successful! (Simulated)');
     }
   };
 
@@ -333,10 +313,10 @@ export function MyBookingsPage() {
                   <div className="flex flex-col gap-2 shrink-0">
                     {booking.status === 'approved' && !booking.deposit_paid && (
                       <button
-                        onClick={() => handleSimulatePayment(booking)}
+                        onClick={() => setPaymentModal(booking)}
                         className="btn-primary px-4 py-2 text-xs"
                       >
-                        Pay Now (Simulated)
+                        Pay Now
                       </button>
                     )}
                     {booking.status === 'requested' && (
@@ -456,6 +436,19 @@ export function MyBookingsPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Payment modal */}
+      {paymentModal && (
+        <PaymentModal
+          booking={paymentModal}
+          equipment={equipmentMap[paymentModal.equipment_id]}
+          onClose={() => setPaymentModal(null)}
+          onSuccess={(updated) => {
+            setBookings((prev) => prev.map((b) => (b.id === updated.id ? updated : b)));
+            setPaymentModal(null);
+          }}
+        />
       )}
 
       {/* Dispute modal */}
