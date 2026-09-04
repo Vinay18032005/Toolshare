@@ -14,6 +14,8 @@ import {
   CheckCircle2,
   XCircle,
   Clock,
+  Backpack,
+  AlertTriangle,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
@@ -25,14 +27,16 @@ import { BOOKING_STATUS_LABELS, BOOKING_STATUS_COLORS } from '@/types';
 import type { Equipment, Booking, Profile } from '@/types';
 import toast from 'react-hot-toast';
 
-type Tab = 'listings' | 'requests' | 'analytics';
+type Tab = 'listings' | 'requests' | 'mybookings' | 'analytics';
 
 export function DashboardPage() {
   const { user, profile, refreshProfile } = useAuth();
   const [tab, setTab] = useState<Tab>('listings');
   const [listings, setListings] = useState<Equipment[]>([]);
   const [incomingBookings, setIncomingBookings] = useState<Booking[]>([]);
+  const [outgoingBookings, setOutgoingBookings] = useState<Booking[]>([]);
   const [borrowers, setBorrowers] = useState<Record<string, Profile>>({});
+  const [lenders, setLenders] = useState<Record<string, Profile>>({});
   const [equipmentMap, setEquipmentMap] = useState<Record<string, Equipment>>({});
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ totalEarnings: 0, totalRentals: 0, activeListings: 0, avgRating: 0 });
@@ -80,6 +84,40 @@ export function DashboardPage() {
             const map: Record<string, Equipment> = {};
             (eqs as Equipment[]).forEach((e) => (map[e.id] = e));
             setEquipmentMap(map);
+          }
+        }
+      }
+
+      // Fetch outgoing bookings (as borrower)
+      const { data: outgoingData } = await supabase
+        .from('bookings')
+        .select('*')
+        .eq('borrower_id', user.id)
+        .order('created_at', { ascending: false });
+      if (outgoingData) {
+        setOutgoingBookings(outgoingData as Booking[]);
+        const lenderIds = [...new Set((outgoingData as Booking[]).map((b) => b.lender_id))];
+        if (lenderIds.length > 0) {
+          const { data: lenderProfiles } = await supabase
+            .from('profiles')
+            .select('*')
+            .in('id', lenderIds);
+          if (lenderProfiles) {
+            const map: Record<string, Profile> = {};
+            (lenderProfiles as Profile[]).forEach((p) => (map[p.id] = p));
+            setLenders(map);
+          }
+        }
+        const outgoingEqIds = [...new Set((outgoingData as Booking[]).map((b) => b.equipment_id))];
+        if (outgoingEqIds.length > 0) {
+          const { data: outgoingEqs } = await supabase
+            .from('equipment')
+            .select('*')
+            .in('id', outgoingEqIds);
+          if (outgoingEqs) {
+            const map: Record<string, Equipment> = {};
+            (outgoingEqs as Equipment[]).forEach((e) => (map[e.id] = e));
+            setEquipmentMap((prev) => ({ ...prev, ...map }));
           }
         }
       }
@@ -199,6 +237,7 @@ export function DashboardPage() {
         {[
           { key: 'listings' as Tab, label: 'My Listings', count: listings.length },
           { key: 'requests' as Tab, label: 'Booking Requests', count: incomingBookings.length },
+          { key: 'mybookings' as Tab, label: 'My Bookings', count: outgoingBookings.length },
           { key: 'analytics' as Tab, label: 'Analytics', count: 0 },
         ].map((t) => (
           <button
@@ -345,6 +384,127 @@ export function DashboardPage() {
                         </button>
                       )}
                     </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+
+      {tab === 'mybookings' && (
+        <>
+          {outgoingBookings.length === 0 ? (
+            <EmptyState
+              icon={Backpack}
+              title="No bookings yet"
+              description="Browse equipment and send a booking request to get started."
+              action={{ label: 'Browse Equipment', onClick: () => window.location.href = '/browse' }}
+            />
+          ) : (
+            <div className="space-y-4">
+              {outgoingBookings.map((booking) => {
+                const eq = equipmentMap[booking.equipment_id];
+                const lender = lenders[booking.lender_id];
+                return (
+                  <div key={booking.id} className="card p-5">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                      <Link to={`/equipment/${booking.equipment_id}`} className="w-16 h-16 rounded-xl bg-gray-100 dark:bg-gray-800 overflow-hidden shrink-0">
+                        {eq?.photos?.[0] ? (
+                          <img src={eq.photos[0]} alt="" className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-2xl">🔧</div>
+                        )}
+                      </Link>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Link to={`/equipment/${booking.equipment_id}`}>
+                            <h3 className="font-semibold text-gray-900 dark:text-gray-100 hover:text-brand-600 truncate">
+                              {eq?.name || 'Equipment'}
+                            </h3>
+                          </Link>
+                          <span className={classNames('badge', BOOKING_STATUS_COLORS[booking.status])}>
+                            {BOOKING_STATUS_LABELS[booking.status]}
+                          </span>
+                          {booking.dispute_flag && (
+                            <span className="badge bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                              <AlertTriangle className="w-3 h-3" /> Disputed
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-gray-400 mt-0.5">
+                          {formatDate(booking.start_date)} → {formatDate(booking.end_date)}
+                        </p>
+                        <p className="text-sm text-gray-400">Owner: {lender?.name || 'Unknown'}</p>
+                        <div className="flex items-center gap-3 mt-2 text-sm">
+                          <span className="font-medium text-gray-700 dark:text-gray-300">
+                            {formatCurrency(booking.total_amount)}
+                          </span>
+                          {booking.deposit_paid ? (
+                            <span className="text-green-600 flex items-center gap-1">
+                              <CheckCircle2 className="w-3.5 h-3.5" /> Paid
+                            </span>
+                          ) : booking.status === 'approved' && (
+                            <span className="text-amber-600">Payment pending</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-2 shrink-0">
+                        {booking.status === 'requested' && (
+                          <button
+                            onClick={async () => {
+                              if (!confirm('Cancel this booking request?')) return;
+                              const { error } = await supabase.from('bookings').update({ status: 'cancelled' }).eq('id', booking.id);
+                              if (error) { toast.error('Failed to cancel'); }
+                              else {
+                                setOutgoingBookings((prev) => prev.map((b) => (b.id === booking.id ? { ...b, status: 'cancelled' } : b)));
+                                toast.success('Booking cancelled');
+                              }
+                            }}
+                            className="btn-secondary px-4 py-2 text-xs"
+                          >
+                            <XCircle className="w-4 h-4" /> Cancel
+                          </button>
+                        )}
+                        {booking.status === 'approved' && !booking.deposit_paid && (
+                          <button
+                            onClick={async () => {
+                              const { error } = await supabase.from('bookings').update({ deposit_paid: true, rental_paid: true }).eq('id', booking.id);
+                              if (error) { toast.error('Payment failed'); }
+                              else {
+                                setOutgoingBookings((prev) => prev.map((b) => (b.id === booking.id ? { ...b, deposit_paid: true, rental_paid: true } : b)));
+                                toast.success('Payment successful! (Simulated)');
+                              }
+                            }}
+                            className="btn-primary px-4 py-2 text-xs"
+                          >
+                            Pay Now
+                          </button>
+                        )}
+                        <Link
+                          to="/my-bookings"
+                          className="btn-ghost px-4 py-2 text-xs text-brand-600"
+                        >
+                          View Details <ArrowRight className="w-3.5 h-3.5" />
+                        </Link>
+                      </div>
+                    </div>
+                    {(booking.condition_notes_before || booking.condition_notes_after) && (
+                      <div className="mt-4 pt-4 border-t border-gray-50 dark:border-gray-800 grid sm:grid-cols-2 gap-3">
+                        {booking.condition_notes_before && (
+                          <div className="text-sm">
+                            <p className="text-xs font-medium text-gray-400 mb-1">Before handoff notes</p>
+                            <p className="text-gray-600 dark:text-gray-400">{booking.condition_notes_before}</p>
+                          </div>
+                        )}
+                        {booking.condition_notes_after && (
+                          <div className="text-sm">
+                            <p className="text-xs font-medium text-gray-400 mb-1">After return notes</p>
+                            <p className="text-gray-600 dark:text-gray-400">{booking.condition_notes_after}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
